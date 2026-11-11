@@ -37,6 +37,14 @@ export function useCompany<T>(view: string, missionId = "") {
     };
   }, [pending, id, view, missionId, tick]);
 
+  useEffect(() => {
+    function refresh() {
+      if (document.visibilityState === "visible") setTick((value) => value + 1);
+    }
+    document.addEventListener("visibilitychange", refresh);
+    return () => document.removeEventListener("visibilitychange", refresh);
+  }, []);
+
   return { data, error, loading: pending || loading, reload: () => setTick((value) => value + 1) };
 }
 

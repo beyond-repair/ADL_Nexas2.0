@@ -5,6 +5,8 @@ import {
   assertMissionTransition,
   canonicalAssignments,
   CompanyError,
+  dollarsToCents,
+  formatMoney,
   localDraft,
   localPlan,
   nextDefects,
@@ -97,6 +99,40 @@ test("the local slice does not embed markup from the objective", () => {
   const draft = localDraft("developer", "Track jobs <script>alert(1)</script>", "");
   assert.equal(draft.includes("<script>alert"), false);
   assert.equal(draft.includes("scriptalert(1)"), true);
+});
+
+test("a fenced page with no control is not a working slice", () => {
+  const objective = "Track contractor jobs and draft invoices";
+  const artifacts = {
+    researcher: localDraft("researcher", objective, ""),
+    product: localDraft("product", objective, ""),
+    architect: localDraft("architect", objective, ""),
+    designer: localDraft("designer", objective, ""),
+    developer: `${"x".repeat(400)}\n\`\`\`html\n<!doctype html><p>The work is done.</p>\n\`\`\``,
+  };
+  const checks = verifyArtifacts(artifacts);
+  assert.equal(checks.find((item) => item.name === "Working slice")?.passed, false);
+  assert.equal(verifyArtifacts({ ...artifacts, developer: localDraft("developer", objective, "") }).find((item) => item.name === "Working slice")?.passed, true);
+});
+
+test("a failed working slice goes back to engineering", () => {
+  assert.equal(reworkFrom(["Working slice"], []), "developer");
+});
+
+test("payment amounts are cents or nothing", () => {
+  assert.equal(dollarsToCents("25"), 2500);
+  assert.equal(dollarsToCents("$25.50"), 2550);
+  assert.equal(dollarsToCents("25.5"), 2550);
+  assert.equal(dollarsToCents("0"), null);
+  assert.equal(dollarsToCents("nope"), null);
+  assert.equal(formatMoney(2550), "$25.50");
+});
+
+test("rejection returns to the plan and cannot be accepted in place", () => {
+  assert.throws(() => assertMissionTransition("REJECTED", "ACCEPTED"), CompanyError);
+  assert.doesNotThrow(() => assertMissionTransition("REJECTED", "PLANNED"));
+  assert.throws(() => assertMissionTransition("CANCELLED", "PLANNED"), CompanyError);
+  assert.throws(() => assertMissionTransition("ACCEPTED", "PLANNED"), CompanyError);
 });
 
 test("a short department artifact fails its own check and the local draft does not", () => {

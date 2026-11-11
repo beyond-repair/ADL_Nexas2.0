@@ -5,6 +5,7 @@ import type { Thinker, Sql } from "./company-store";
 import { WORKFORCE_MODEL } from "./company";
 import {
   acceptMission,
+  answerMission,
   authorizeMission,
   cancelMission,
   commandCenter,
@@ -12,13 +13,16 @@ import {
   knowledge,
   missionView,
   operations,
+  payments,
   planMission,
+  recordPayment,
   recoverRun,
   rejectMission,
   reopenMission,
   rework,
   runNext,
   submitMission,
+  voidPayment,
   workforce,
 } from "./company-store";
 
@@ -61,7 +65,8 @@ export const loadCompany = createServerFn({ method: "POST" })
       view !== "workforce" &&
       view !== "operations" &&
       view !== "knowledge" &&
-      view !== "governance"
+      view !== "governance" &&
+      view !== "payments"
     ) {
       throw new Error("Unknown view");
     }
@@ -75,11 +80,23 @@ export const loadCompany = createServerFn({ method: "POST" })
     if (data.view === "workforce") return workforce(sql, context.userId);
     if (data.view === "operations") return operations(sql, context.userId);
     if (data.view === "knowledge") return knowledge(sql, context.userId);
+    if (data.view === "payments") return payments(sql, context.userId);
     return governance(sql, context.userId);
   });
 
 export const companyCommand = createServerFn({ method: "POST" })
-  .validator((input: { type: string; missionId?: string; objective?: string; note?: string }) => input)
+  .validator((input: { type?: string; missionId?: string; objective?: string; note?: string; payer?: string; amount?: string; paymentId?: string }) => {
+    if (!input || typeof input.type !== "string" || !input.type) throw new Error("Unknown command");
+    return {
+      type: input.type,
+      missionId: typeof input.missionId === "string" ? input.missionId : "",
+      objective: typeof input.objective === "string" ? input.objective : "",
+      note: typeof input.note === "string" ? input.note : "",
+      payer: typeof input.payer === "string" ? input.payer : "",
+      amount: typeof input.amount === "string" ? input.amount : "",
+      paymentId: typeof input.paymentId === "string" ? input.paymentId : "",
+    };
+  })
   .middleware([authMiddleware])
   .handler(async ({ context, data }) => {
     const sql = db(await getSql());
@@ -114,6 +131,23 @@ export const companyCommand = createServerFn({ method: "POST" })
     }
     if (data.type === "reopen") {
       await reopenMission(sql, context.userId, missionId);
+      return { ok: true as const };
+    }
+    if (data.type === "answer") {
+      await answerMission(sql, context.userId, missionId, data.note);
+      return { ok: true as const };
+    }
+    if (data.type === "record-payment") {
+      await recordPayment(sql, context.userId, {
+        payer: data.payer,
+        amount: data.amount,
+        note: data.note,
+        missionId,
+      });
+      return { ok: true as const };
+    }
+    if (data.type === "void-payment") {
+      await voidPayment(sql, context.userId, data.paymentId);
       return { ok: true as const };
     }
     throw new Error("Unknown command");

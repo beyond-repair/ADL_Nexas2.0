@@ -1,4 +1,5 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
+import { PayCard } from "@/components/company-notes";
 import { Shell, useReadySession } from "@/components/shell";
 import { Alert, when } from "@/components/nexus-ui";
 import type { OperationsView } from "@/lib/nexus/company-store";
@@ -24,7 +25,10 @@ function Board() {
   return (
     <div className="py-6">
       <h1 className="text-2xl font-medium">Operations</h1>
-      <p className="mt-2 max-w-xl text-sm text-muted">Assignments across missions. Nothing here runs by itself.</p>
+      <p className="mt-2 max-w-xl text-sm text-muted">Assignments across missions. Nothing here runs by itself. A run that stops is recovered from the mission, and its token is dropped so it cannot write later.</p>
+      <div className="mt-6 max-w-sm">
+        <PayCard />
+      </div>
       {data.rows.length === 0 ? (
         <p className="mt-6 text-sm text-muted">No assignments yet. Establish a mission and develop its strategy.</p>
       ) : (

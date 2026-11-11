@@ -16,6 +16,7 @@ import { Route as GovernanceRouteImport } from './routes/governance'
 import { Route as KnowledgeRouteImport } from './routes/knowledge'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as OperationsRouteImport } from './routes/operations'
+import { Route as PaymentsRouteImport } from './routes/payments'
 import { Route as WorkforceRouteImport } from './routes/workforce'
 import { Route as MissionsIndexRouteImport } from './routes/missions/index'
 import { Route as MissionsMissionIdRouteImport } from './routes/missions/$missionId'
@@ -58,6 +59,11 @@ const OperationsRoute = OperationsRouteImport.update({
   path: '/operations',
   getParentRoute: () => rootRouteImport,
 } as any)
+const PaymentsRoute = PaymentsRouteImport.update({
+  id: '/payments',
+  path: '/payments',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const WorkforceRoute = WorkforceRouteImport.update({
   id: '/workforce',
   path: '/workforce',
@@ -97,6 +103,7 @@ export interface FileRoutesByFullPath {
   '/knowledge': typeof KnowledgeRoute
   '/login': typeof LoginRoute
   '/operations': typeof OperationsRoute
+  '/payments': typeof PaymentsRoute
   '/workforce': typeof WorkforceRoute
   '/missions/$missionId': typeof MissionsMissionIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
@@ -112,6 +119,7 @@ export interface FileRoutesByTo {
   '/knowledge': typeof KnowledgeRoute
   '/login': typeof LoginRoute
   '/operations': typeof OperationsRoute
+  '/payments': typeof PaymentsRoute
   '/workforce': typeof WorkforceRoute
   '/missions/$missionId': typeof MissionsMissionIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
@@ -128,6 +136,7 @@ export interface FileRoutesById {
   '/knowledge': typeof KnowledgeRoute
   '/login': typeof LoginRoute
   '/operations': typeof OperationsRoute
+  '/payments': typeof PaymentsRoute
   '/workforce': typeof WorkforceRoute
   '/missions/$missionId': typeof MissionsMissionIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
@@ -145,6 +154,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/login'
     | '/operations'
+    | '/payments'
     | '/workforce'
     | '/missions/$missionId'
     | '/projects/$projectId'
@@ -160,6 +170,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/login'
     | '/operations'
+    | '/payments'
     | '/workforce'
     | '/missions/$missionId'
     | '/projects/$projectId'
@@ -175,6 +186,7 @@ export interface FileRouteTypes {
     | '/knowledge'
     | '/login'
     | '/operations'
+    | '/payments'
     | '/workforce'
     | '/missions/$missionId'
     | '/projects/$projectId'
@@ -191,6 +203,7 @@ export interface RootRouteChildren {
   KnowledgeRoute: typeof KnowledgeRoute
   LoginRoute: typeof LoginRoute
   OperationsRoute: typeof OperationsRoute
+  PaymentsRoute: typeof PaymentsRoute
   WorkforceRoute: typeof WorkforceRoute
   MissionsMissionIdRoute: typeof MissionsMissionIdRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
@@ -250,6 +263,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OperationsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/payments': {
+      id: '/payments'
+      path: '/payments'
+      fullPath: '/payments'
+      preLoaderRoute: typeof PaymentsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/workforce': {
       id: '/workforce'
       path: '/workforce'
@@ -303,6 +323,7 @@ const rootRouteChildren: RootRouteChildren = {
   KnowledgeRoute: KnowledgeRoute,
   LoginRoute: LoginRoute,
   OperationsRoute: OperationsRoute,
+  PaymentsRoute: PaymentsRoute,
   WorkforceRoute: WorkforceRoute,
   MissionsMissionIdRoute: MissionsMissionIdRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRoute,

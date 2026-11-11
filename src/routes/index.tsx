@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AccessPanel } from "@/components/access-panel";
+import { PayCard, RunTokenNote } from "@/components/company-notes";
 import { Shell, useReadySession } from "@/components/shell";
 import { Alert, Button, controlClass } from "@/components/nexus-ui";
 import { companyCommand } from "@/lib/nexus/company-api";
@@ -143,7 +144,7 @@ function Command() {
             <p className="mt-3 text-sm text-muted">No missions. The workforce is standing by until you set an objective.</p>
           ) : (
             <ul className="mt-2 divide-y divide-line border-y border-line">
-              {data.missions.map((mission) => (
+              {data.missions.slice(0, 8).map((mission) => (
                 <li key={mission.id}>
                   <Link to="/missions/$missionId" params={{ missionId: mission.id }} className="flex min-h-11 items-center justify-between gap-3 py-3">
                     <span className="min-w-0">
@@ -158,6 +159,15 @@ function Command() {
               ))}
             </ul>
           )}
+        </section>
+        <section className="mt-10">
+          <h2 className="text-sm font-medium">How a department run is locked</h2>
+          <div className="mt-2 max-w-xl">
+            <RunTokenNote />
+          </div>
+          <p className="mt-3 text-sm">
+            <Link to="/blueprint" className="text-accent">Operating contract</Link>
+          </p>
         </section>
         {error ? (
           <button type="button" className="mt-4 text-sm text-danger" onClick={reload}>
@@ -190,6 +200,26 @@ function Command() {
                   <Link to="/missions/$missionId" params={{ missionId: mission.id }} className="text-sm text-accent">
                     {mission.title}
                   </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
+        <PayCard recordedCents={data.counts.recordedCents} />
+        {data.recent.length > 0 ? (
+          <section>
+            <h2 className="text-sm font-medium">Latest record</h2>
+            <ul className="mt-2 space-y-2">
+              {data.recent.map((event) => (
+                <li key={event.id} className="text-sm">
+                  <span className="font-mono text-xs">{event.action}</span>
+                  {event.target?.startsWith("msn_") ? (
+                    <Link to="/missions/$missionId" params={{ missionId: event.target }} className="mt-0.5 block text-xs text-accent">
+                      {event.detail || "Open the mission"}
+                    </Link>
+                  ) : event.detail ? (
+                    <span className="mt-0.5 block text-xs text-muted">{event.detail}</span>
+                  ) : null}
                 </li>
               ))}
             </ul>

@@ -25,7 +25,7 @@ function Library() {
     <div className="py-6">
       <h1 className="text-2xl font-medium">Knowledge</h1>
       <p className="mt-2 max-w-xl text-sm text-muted">
-        Decisions and findings stay attached to a source. Owner-accepted entries are marked verified. Nothing is silently overwritten.
+        Accepted decisions stay, and they include the specification and the slice. Rewriting a plan replaces that mission's unverified strategy. It does not erase a verified decision.
       </p>
       {data.entries.length === 0 ? (
         <p className="mt-6 text-sm text-muted">The company has not recorded anything yet.</p>
@@ -37,6 +37,13 @@ function Library() {
                 {entry.kind} · {entry.source} · {entry.verified ? "verified" : "unverified"} · {when(entry.createdAt)}
               </p>
               <h2 className="mt-1 text-sm font-medium">{entry.title}</h2>
+              {entry.missionId ? (
+                <p className="mt-1 text-sm">
+                  <Link to="/missions/$missionId" params={{ missionId: entry.missionId }} className="text-accent">
+                    Open the mission
+                  </Link>
+                </p>
+              ) : null}
               <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap font-sans text-sm leading-relaxed text-muted">{entry.body}</pre>
             </li>
           ))}

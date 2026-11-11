@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Shell } from "@/components/shell";
-import { LEVEL_LABEL, MISSION_LABEL, MISSION_PATH, OWNER_GATES, PIPELINE } from "@/lib/nexus/company";
+import { LEVEL_LABEL, MISSION_LABEL, MISSION_PATH, OWNER_GATES, PAYMENT, PIPELINE, RUN_TOKEN } from "@/lib/nexus/company";
 
 export const Route = createFileRoute("/blueprint")({ component: BlueprintPage });
 
@@ -41,14 +41,27 @@ function BlueprintPage() {
             ))}
           </ul>
         </Section>
+        <Section title="Run token">
+          <p className="text-sm leading-relaxed text-muted">{RUN_TOKEN}</p>
+        </Section>
+        <Section title="Payments">
+          <p className="text-sm leading-relaxed text-muted">
+            {PAYMENT.business} receives money on {PAYMENT.method} at {PAYMENT.cashtag}. NEXUS shows that destination and stores a payment only when you record it. It does not charge a card, and it does not ask Cash App whether the money arrived.
+          </p>
+        </Section>
         <Section title="Honest limits">
           <ul className="list-disc space-y-2 pl-5 text-sm leading-relaxed text-muted">
-            <li>One workspace per signed-in owner. No second company, no customers, no money movement.</li>
-            <li>After you authorize, Run the company walks the remaining departments and updates the record after each one. It stops if quality fails. It does not keep going after you leave the page.</li>
-            <li>Accepted missions become verified memory. The next plan and every department read that memory. Unaccepted drafts do not.</li>
+            <li>One workspace per signed-in owner.</li>
+            <li>After you authorize, Run the company walks the remaining departments and updates the record after each one. It stops if quality fails. Leaving the page stops the walk. Coming back reloads the record, and a run older than 90 seconds is released.</li>
+            <li>Accepted missions become verified memory, including a short specification and the implementation. The next plan and every department read that memory. Unaccepted drafts do not.</li>
+            <li>A rejected packet can return to the plan. The departments run again. Rewriting the strategy is allowed after a rejection, even if work already ran.</li>
+            <li>A recorded payment can be voided. The row stays, the total drops it, and voiding is not a refund.</li>
+            <li>Rewriting a plan replaces that mission's unverified strategy. A verified decision stays.</li>
             <li>Department writing uses GPT-OSS 20B through a free public endpoint. It does not spend model credits. If that endpoint is down, the local orchestrator writes the step and says so.</li>
+            <li>Quality checks length, a fenced page, a usable control, and self-approval. It does not run the slice as a product test.</li>
             <li>The company record stays when you come back. A published deploy uses the hosted database when one is configured.</li>
-            <li>A failed check is an open defect. Fix and retest redoes the department that failed it, then verifies again. A later pass closes the defect.</li>
+            <li>A failed check is an open defect. Fix and retest redoes the department that owns it, then verifies again. A later pass closes the defect.</li>
+            <li>The old project and task boards are closed. They do not run work.</li>
           </ul>
         </Section>
       </article>

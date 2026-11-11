@@ -186,6 +186,17 @@ const PIPELINE_COPY: Record<PipelineAgent, { title: string; brief: (objective: s
 
 export const WORKFORCE_MODEL = "gpt-oss-20b";
 
+export const PAYMENT = {
+  business: "Atomic Dream Labs",
+  method: "Cash App",
+  cashtag: "$AtomicDreamLabs",
+  qr: "/pay/cash-app.png",
+} as const;
+
+/** Shown on the command center, the mission, governance, and the operating contract. */
+export const RUN_TOKEN =
+  "Each department run carries a token on that assignment, kept apart from the model name. The run can save its work only while that token is still there. Recover, a run that sat for 90 seconds, or a newer run replaces the token, so a late answer cannot overwrite the newer work.";
+
 export type Check = { name: string; passed: boolean; detail: string };
 
 export type PlanAssignment = { agent: PipelineAgent; title: string; brief: string };
@@ -213,6 +224,11 @@ export function assertMissionTransition(from: MissionStatus, to: MissionStatus):
   if (!MISSION_TRANSITIONS[from].includes(to)) {
     throw new CompanyError(`Illegal transition ${from} → ${to}`);
   }
+}
+
+export function departmentRank(slug: string): number {
+  const index = DEPARTMENTS.findIndex((department) => department.slug === slug);
+  return index === -1 ? DEPARTMENTS.length : index;
 }
 
 export function agentBySlug(slug: string): AgentSeed | undefined {
@@ -410,6 +426,13 @@ export function verifyArtifacts(artifacts: Partial<Record<PipelineAgent, string>
       /```/.test(implementation) ? "A fenced source block is present." : "No fenced source block.",
     ),
     check(
+      "Working slice",
+      sliceHasControl(implementation),
+      sliceHasControl(implementation)
+        ? "The fenced page has a control the owner can use."
+        : "The fenced page has no button, field, or form.",
+    ),
+    check(
       "No self-approval",
       implementation.trim().length > 0 && !banned,
       banned ? "The implementation tries to accept itself." : "The implementation does not accept itself.",
@@ -431,12 +454,13 @@ export function allPassed(checks: Check[]): boolean {
   return checks.length > 0 && checks.every((item) => item.passed);
 }
 
-const CHECK_OWNER: Partial<Record<string, PipelineAgent>> = {
+export const CHECK_OWNER: Partial<Record<string, PipelineAgent>> = {
   "Research brief": "researcher",
   "Product specification": "product",
   "Technical design": "architect",
   "Interface specification": "designer",
   "Implementation source": "developer",
+  "Working slice": "developer",
   "No self-approval": "developer",
 };
 
@@ -519,11 +543,33 @@ function escapeHtml(value: string): string {
     .replace(/"/g, "\u0026quot;");
 }
 
+function sliceHasControl(implementation: string): boolean {
+  const fenced =
+    implementation.match(/```html\s*([\s\S]*?)```/i)?.[1] ??
+    implementation.match(/```\s*(<!doctype html[\s\S]*?)```/i)?.[1] ??
+    "";
+  return /<(button|form|input|textarea|select)\b|onclick=|addEventListener\(/i.test(fenced);
+}
+
+/** Dollars as typed by the owner. Returns cents, or null when the text is not an amount. */
+export function dollarsToCents(raw: string): number | null {
+  const clean = raw.trim().replace(/[$,\s]/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(clean)) return null;
+  const cents = Math.round(Number(clean) * 100);
+  if (!Number.isFinite(cents) || cents < 1 || cents > 100_000_000) return null;
+  return cents;
+}
+
+export function formatMoney(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
 export const LEVEL_LABEL = ["L0 Read", "L1 Research", "L2 Draft", "L3 Modify project", "L4 External, still gated"] as const;
 
 export const OWNER_GATES = [
   "Authorize a mission plan",
   "Accept or reject a delivery",
   "Cancel a mission",
-  "Change who can act",
+  "Record a payment that already arrived",
+  "Void a payment record",
 ] as const;

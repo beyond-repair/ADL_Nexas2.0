@@ -11,11 +11,15 @@ import {
   assemblePacket,
   canonicalAssignments,
   CompanyError,
+  departmentRank,
+  dollarsToCents,
+  formatMoney,
   isMissionStatus,
   localDraft,
   localPlan,
   nextDefects,
   ownedChecksPass,
+  PAYMENT,
   PIPELINE,
   planFromModel,
   renderVerification,
@@ -43,11 +47,11 @@ export type MissionSummary = {
 
 export type CommandCenter = {
   organization: { id: string; name: string; role: string };
-  counts: { missions: number; executing: number; awaiting: number; defects: number };
+  counts: { missions: number; executing: number; awaiting: number; defects: number; recordedCents: number };
   missions: MissionSummary[];
   departments: Array<{ slug: string; name: string; mandate: string; open: number }>;
   awaiting: Array<{ id: string; title: string }>;
-  recent: Array<{ id: string; action: string; detail: string; createdAt: string }>;
+  recent: Array<{ id: string; action: string; detail: string; target: string | null; createdAt: string }>;
 };
 
 export type AssignmentView = {
@@ -73,6 +77,7 @@ export type MissionView = {
     status: MissionStatus;
     strategy: string;
     questions: string[];
+    answers: string;
     planSource: string;
     updatedAt: string;
   };
@@ -80,6 +85,7 @@ export type MissionView = {
   audit: Array<{ id: string; action: string; detail: string; fromState: string | null; toState: string | null; createdAt: string }>;
   memory: string[];
   defects: Array<{ id: string; name: string; detail: string }>;
+  payments: PaymentRow[];
 };
 
 export type WorkforceView = {
@@ -124,7 +130,27 @@ export type KnowledgeView = {
 };
 
 export type GovernanceView = {
-  events: Array<{ id: string; action: string; actorId: string; detail: string; fromState: string | null; toState: string | null; createdAt: string }>;
+  events: Array<{ id: string; action: string; actorId: string; detail: string; target: string | null; fromState: string | null; toState: string | null; createdAt: string }>;
+};
+
+export type PaymentRow = {
+  id: string;
+  payer: string;
+  amountCents: number;
+  method: string;
+  destination: string;
+  note: string;
+  voidedAt: string | null;
+  missionId: string | null;
+  missionTitle: string | null;
+  createdAt: string;
+};
+
+export type PaymentsView = {
+  destination: typeof PAYMENT;
+  totalCents: number;
+  rows: PaymentRow[];
+  missions: Array<{ id: string; title: string }>;
 };
 
 type Workspace = { orgId: string; role: string; orgName: string };
@@ -143,8 +169,10 @@ export async function commandCenter(sql: Sql, userId: string): Promise<CommandCe
   const awaiting = missions.filter((mission) => mission.status === "AWAITING_ACCEPTANCE");
   const defectRows = await sql<{ open: unknown }>`select count(*)::int as open from defects
     where organization_id = ${ws.orgId} and status = ${"open"}`;
-  const recent = await sql<{ id: string; action: string; detail: string; created_at: unknown }>`
-    select id, action, detail, created_at from audit_events
+  const paid = await sql<{ total: unknown }>`select coalesce(sum(amount_cents), 0)::int as total from payments
+    where organization_id = ${ws.orgId} and voided_at is null`;
+  const recent = await sql<{ id: string; action: string; detail: string; target: string | null; created_at: unknown }>`
+    select id, action, detail, target, created_at from audit_events
     where organization_id = ${ws.orgId} order by created_at desc limit 6`;
   return {
     organization: { id: ws.orgId, name: ws.orgName, role: ws.role },
@@ -153,19 +181,21 @@ export async function commandCenter(sql: Sql, userId: string): Promise<CommandCe
       executing: missions.filter((mission) => mission.status === "EXECUTING" || mission.status === "AUTHORIZED").length,
       awaiting: awaiting.length,
       defects: num(defectRows[0]?.open),
+      recordedCents: num(paid[0]?.total),
     },
-    missions: missions.slice(0, 8),
+    missions,
     departments: departments.map((row) => ({
       slug: row.slug,
       name: row.name,
       mandate: row.mandate,
       open: num(row.open),
-    })),
+    })).sort((a, b) => departmentRank(a.slug) - departmentRank(b.slug)),
     awaiting: awaiting.map((mission) => ({ id: mission.id, title: mission.title })),
     recent: recent.map((row) => ({
       id: row.id,
       action: row.action,
       detail: row.detail,
+      target: row.target,
       createdAt: iso(row.created_at),
     })),
   };
@@ -200,6 +230,7 @@ export async function missionView(sql: Sql, userId: string, missionId: string): 
       status: mission.status,
       strategy: mission.strategy,
       questions: readStrings(mission.questions),
+      answers: mission.answers,
       planSource: mission.plan_source,
       updatedAt: iso(mission.updated_at),
     },
@@ -214,6 +245,7 @@ export async function missionView(sql: Sql, userId: string, missionId: string): 
     })),
     memory: await memoryTitles(sql, ws.orgId, mission.id),
     defects: await openDefects(sql, mission.id),
+    payments: await missionPayments(sql, ws.orgId, mission.id),
   };
 }
 
@@ -243,10 +275,10 @@ export async function workforce(sql: Sql, userId: string): Promise<WorkforceView
           name: agent.name,
           title: agent.title,
           responsibility: agent.responsibility,
-          reportsTo: agent.reports_to,
+          reportsTo: agent.reports_to ? (agentBySlug(agent.reports_to)?.name ?? agent.reports_to) : null,
           level: Number(agent.permission_level),
         })),
-    })),
+    })).sort((a, b) => departmentRank(a.slug) - departmentRank(b.slug)),
   };
 }
 
@@ -312,10 +344,11 @@ export async function governance(sql: Sql, userId: string): Promise<GovernanceVi
     action: string;
     actor_id: string;
     detail: string;
+    target: string | null;
     from_state: string | null;
     to_state: string | null;
     created_at: unknown;
-  }>`select id, action, actor_id, detail, from_state, to_state, created_at
+  }>`select id, action, actor_id, detail, target, from_state, to_state, created_at
     from audit_events where organization_id = ${ws.orgId}
     order by created_at desc limit 40`;
   return {
@@ -324,6 +357,7 @@ export async function governance(sql: Sql, userId: string): Promise<GovernanceVi
       action: row.action,
       actorId: row.actor_id,
       detail: row.detail,
+      target: row.target,
       fromState: row.from_state,
       toState: row.to_state,
       createdAt: iso(row.created_at),
@@ -354,21 +388,27 @@ export async function planMission(sql: Sql, userId: string, missionId: string, t
     throw new CompanyError("This mission can only be planned before it is authorized.");
   }
   const existing = await loadAssignments(sql, mission.id);
-  if (existing.some((row) => row.status === "DONE" || row.status === "RUNNING")) {
-    throw new CompanyError("Work has already started. Cancel it if you want a new plan.");
+  if (existing.some((row) => row.status === "RUNNING")) {
+    throw new CompanyError("Recover the running department before rewriting the plan.");
+  }
+  if (mission.status !== "REJECTED" && existing.some((row) => row.status === "DONE")) {
+    throw new CompanyError("Work has already started. Reject the packet, or cancel the mission, before a new plan.");
   }
   const memory = await memoryBrief(sql, ws.orgId, mission.id);
   const thought = await think({
     system:
       "You are the CEO of Atomic Dream Labs inside NEXUS. You write a plan. You do not execute it and you cannot accept it. Return JSON only. Do not contradict verified memory.",
-    user: `Objective:\n${mission.objective}\n\nVerified memory from accepted missions:\n${memory || "None yet."}\n\nReturn JSON with keys title (string), strategy (markdown), questions (array of at most 2 strings; empty if the objective is specific), assignments (array of {agent, title, brief}). Agents must be chosen from: researcher, product, architect, designer, developer, qa, coo. Briefs are one or two sentences. Do not claim the mission is finished.`,
+    user: `Objective:\n${mission.objective}\n\nOwner's answer, if any:\n${mission.answers.trim() || "None yet."}\n\nVerified memory from accepted missions:\n${memory || "None yet."}\n\nReturn JSON with keys title (string), strategy (markdown), questions (array of at most 2 strings; empty if the objective is specific), assignments (array of {agent, title, brief}). Agents must be chosen from: researcher, product, architect, designer, developer, qa, coo. Briefs are one or two sentences. Do not claim the mission is finished.`,
   });
   const plan = thought.text.trim() ? planFromModel(mission.objective, thought.text) : localPlan(mission.objective);
   const source = thought.text.trim() ? plan.source : thought.unavailable ? "local-orchestrator · model unavailable" : plan.source;
+  const strategy = mission.answers.trim()
+    ? `${plan.strategy}\n\n## Owner\n${mission.answers.trim()}`
+    : plan.strategy;
   if (mission.status === "REJECTED") assertMissionTransition("REJECTED", "PLANNED");
   else if (mission.status === "PROPOSED") assertMissionTransition("PROPOSED", "PLANNED");
   const moved = await sql<{ id: string }>`update missions set
-      title = ${plan.title}, strategy = ${plan.strategy}, questions = ${JSON.stringify(plan.questions)}::jsonb,
+      title = ${plan.title}, strategy = ${strategy}, questions = ${JSON.stringify(plan.questions)}::jsonb,
       plan_source = ${source}, status = ${"PLANNED"}, updated_at = now()
     where id = ${mission.id} and organization_id = ${ws.orgId} and status = ${mission.status}
     returning id`;
@@ -383,7 +423,10 @@ export async function planMission(sql: Sql, userId: string, missionId: string, t
       ${slot.title}, ${slot.brief}, ${index}, ${"QUEUED"}
     )`;
   }
-  await remember(sql, ws.orgId, mission.id, "decision", `Strategy · ${plan.title}`, plan.strategy, "ceo", false);
+  await sql`delete from knowledge_entries
+    where organization_id = ${ws.orgId} and mission_id = ${mission.id}
+      and verified = ${false} and kind = ${"decision"} and title like ${"Strategy · %"}`;
+  await remember(sql, ws.orgId, mission.id, "decision", `Strategy · ${plan.title}`, strategy, "ceo", false);
   await audit(sql, ws, userId, "mission.planned", mission.id, mission.status, "PLANNED", memory ? `${source} · used verified memory` : source);
 }
 
@@ -428,7 +471,7 @@ export async function runNext(
     throw new CompanyError("An earlier department has not finished.");
   }
   const token = nid("run");
-  const locked = await sql<{ id: string }>`update assignments set status = ${"RUNNING"}, error = ${""}, model = ${token}, updated_at = now()
+  const locked = await sql<{ id: string }>`update assignments set status = ${"RUNNING"}, error = ${""}, model = ${""}, run_token = ${token}, updated_at = now()
     where id = ${next.id} and organization_id = ${ws.orgId} and status in ('QUEUED', 'READY', 'FAILED')
     returning id`;
   if (!locked[0]) throw new CompanyError("That assignment changed. Reload and try again.");
@@ -441,13 +484,13 @@ export async function runNext(
     const defects = (await openDefects(sql, mission.id))
       .map((item) => `- ${item.name}: ${item.detail}`)
       .join("\n");
-    const produced = await produce(next, mission.objective, mission.strategy, prior, think, memory, defects);
+    const produced = await produce(next, mission.objective, mission.strategy, mission.answers, prior, think, memory, defects);
     const failedQa = next.agent_slug === "qa" && !allPassed(produced.evidence);
     const status = failedQa ? "FAILED" : "DONE";
     const saved = await sql<{ id: string }>`update assignments set
         status = ${status}, artifact = ${produced.body}, evidence = ${JSON.stringify(produced.evidence)}::jsonb,
-        model = ${produced.model}, error = ${failedQa ? "Verification did not pass." : ""}, updated_at = now()
-      where id = ${next.id} and organization_id = ${ws.orgId} and status = ${"RUNNING"} and model = ${token}
+        model = ${produced.model}, run_token = ${""}, error = ${failedQa ? "Verification did not pass." : ""}, updated_at = now()
+      where id = ${next.id} and organization_id = ${ws.orgId} and status = ${"RUNNING"} and run_token = ${token}
       returning id`;
     if (!saved[0]) return { agent: agentBySlug(next.agent_slug)?.name ?? next.agent_slug, stopped: true };
     await audit(
@@ -474,8 +517,8 @@ export async function runNext(
     return { agent: agentBySlug(next.agent_slug)?.name ?? next.agent_slug, stopped: false };
   } catch (error) {
     const message = error instanceof Error ? error.message : "The department run failed.";
-    await sql`update assignments set status = ${"FAILED"}, error = ${message}, updated_at = now()
-      where id = ${next.id} and organization_id = ${ws.orgId} and status = ${"RUNNING"} and model = ${token}`;
+    await sql`update assignments set status = ${"FAILED"}, error = ${message}, run_token = ${""}, updated_at = now()
+      where id = ${next.id} and organization_id = ${ws.orgId} and status = ${"RUNNING"} and run_token = ${token}`;
     throw error;
   }
 }
@@ -487,8 +530,8 @@ export async function recoverRun(sql: Sql, userId: string, missionId: string): P
   const running = await sql<{ id: string }>`select id from assignments
     where mission_id = ${mission.id} and organization_id = ${ws.orgId} and status = ${"RUNNING"}`;
   if (!running[0]) throw new CompanyError("Nothing is stuck in a run.");
-  await sql`update assignments set status = ${"READY"}, error = ${"Recovered before an artifact was written."}, updated_at = now()
-    where id = ${running[0].id}`;
+  await sql`update assignments set status = ${"READY"}, model = ${""}, run_token = ${""}, error = ${"Recovered before an artifact was written."}, updated_at = now()
+    where id = ${running[0].id} and status = ${"RUNNING"}`;
   await audit(sql, ws, userId, "assignment.recovered", mission.id, "RUNNING", "READY", "No artifact invented");
 }
 
@@ -502,6 +545,9 @@ export async function rework(sql: Sql, userId: string, missionId: string): Promi
     throw new CompanyError("Only an active mission can be sent back.");
   }
   const assignments = await loadAssignments(sql, mission.id);
+  if (assignments.some((row) => row.status === "RUNNING")) {
+    throw new CompanyError("Recover the running department before sending work back.");
+  }
   const open = await openDefects(sql, mission.id);
   const start = reworkFrom(
     open.map((item) => item.name),
@@ -511,7 +557,7 @@ export async function rework(sql: Sql, userId: string, missionId: string): Promi
   for (const agent of PIPELINE) {
     const index = PIPELINE.indexOf(agent);
     if (index < startAt) continue;
-    await sql`update assignments set status = ${index === startAt ? "READY" : "QUEUED"}, artifact = ${""}, evidence = ${"[]"}::jsonb, model = ${""}, error = ${""}, updated_at = now()
+    await sql`update assignments set status = ${index === startAt ? "READY" : "QUEUED"}, artifact = ${""}, evidence = ${"[]"}::jsonb, model = ${""}, run_token = ${""}, error = ${""}, updated_at = now()
       where mission_id = ${mission.id} and agent_slug = ${agent}`;
   }
   await audit(
@@ -538,13 +584,24 @@ export async function acceptMission(sql: Sql, userId: string, missionId: string,
     throw new CompanyError("Acceptance requires a passing verification record.");
   }
   await moveMission(sql, mission, "ACCEPTED", ws, userId, "mission.accepted", note.trim() || "Owner accepted the packet");
+  const product = assignments.find((row) => row.agent_slug === "product")?.artifact ?? "";
+  const implementation = assignments.find((row) => row.agent_slug === "developer")?.artifact ?? "";
+  const clip = (value: string) => value.replace(/\s+/g, " ").trim().slice(0, 700);
   await remember(
     sql,
     ws.orgId,
     mission.id,
     "decision",
     `Accepted · ${mission.title}`,
-    note.trim() || mission.objective,
+    [
+      note.trim() || mission.objective,
+      "",
+      "Specification",
+      clip(product) || "No specification on record.",
+      "",
+      "Implementation",
+      clip(implementation) || "No implementation on record.",
+    ].join("\n"),
     "owner",
     true,
   );
@@ -565,6 +622,8 @@ export async function cancelMission(sql: Sql, userId: string, missionId: string)
   assertOwner(ws);
   const mission = await mustMission(sql, ws.orgId, missionId);
   assertMissionTransition(mission.status, "CANCELLED");
+  await sql`update assignments set status = ${"FAILED"}, error = ${"Mission cancelled."}, model = ${""}, run_token = ${""}, updated_at = now()
+    where mission_id = ${mission.id} and organization_id = ${ws.orgId} and status <> ${"DONE"}`;
   await moveMission(sql, mission, "CANCELLED", ws, userId, "mission.cancelled", "Owner cancelled the mission");
 }
 
@@ -573,13 +632,170 @@ export async function reopenMission(sql: Sql, userId: string, missionId: string)
   assertOwner(ws);
   const mission = await mustMission(sql, ws.orgId, missionId);
   assertMissionTransition(mission.status, "PLANNED");
-  await moveMission(sql, mission, "PLANNED", ws, userId, "mission.reopened", "Rejected mission returned to the plan");
+  await moveMission(sql, mission, "PLANNED", ws, userId, "mission.reopened", "Rejected mission returned to the plan. Departments run again.");
+  await sql`update assignments set status = ${"QUEUED"}, artifact = ${""}, evidence = ${"[]"}::jsonb, model = ${""}, run_token = ${""}, error = ${""}, updated_at = now()
+    where mission_id = ${mission.id} and organization_id = ${ws.orgId}`;
+}
+
+export async function answerMission(sql: Sql, userId: string, missionId: string, note: string): Promise<void> {
+  const clean = note.trim().replace(/\s+/g, " ");
+  if (clean.length < 4) throw new CompanyError("Write the answer in a sentence.");
+  if (clean.length > 1000) throw new CompanyError("Keep the answer under 1000 characters.");
+  const ws = await ensureCompany(sql, userId);
+  assertOwner(ws);
+  const mission = await mustMission(sql, ws.orgId, missionId);
+  if (mission.status !== "PROPOSED" && mission.status !== "PLANNED" && mission.status !== "REJECTED") {
+    throw new CompanyError("Answers belong on the plan, before execution.");
+  }
+  const saved = await sql<{ id: string }>`update missions set answers = ${clean}, updated_at = now()
+    where id = ${mission.id} and organization_id = ${ws.orgId} and status = ${mission.status}
+    returning id`;
+  if (!saved[0]) throw new CompanyError("The mission changed before the answer could be saved.");
+  await audit(sql, ws, userId, "mission.answered", mission.id, mission.status, mission.status, clean);
+}
+
+export async function payments(sql: Sql, userId: string): Promise<PaymentsView> {
+  const ws = await ensureCompany(sql, userId);
+  const rows = await sql<{
+    id: string;
+    payer: string;
+    amount_cents: unknown;
+    method: string;
+    destination: string;
+    note: string;
+    voided_at: unknown;
+    mission_id: string | null;
+    mission_title: string | null;
+    created_at: unknown;
+  }>`select p.id, p.payer, p.amount_cents, p.method, p.destination, p.note, p.voided_at, p.mission_id, m.title as mission_title, p.created_at
+    from payments p
+    left join missions m on m.id = p.mission_id and m.organization_id = p.organization_id
+    where p.organization_id = ${ws.orgId}
+    order by p.created_at desc limit 40`;
+  const total = await sql<{ total: unknown }>`select coalesce(sum(amount_cents), 0)::int as total from payments
+    where organization_id = ${ws.orgId} and voided_at is null`;
+  const missions = await listMissions(sql, ws.orgId);
+  return {
+    destination: PAYMENT,
+    totalCents: num(total[0]?.total),
+    rows: rows.map(toPayment),
+    missions: missions.map((mission) => ({ id: mission.id, title: mission.title })),
+  };
+}
+
+export async function recordPayment(
+  sql: Sql,
+  userId: string,
+  input: { payer: string; amount: string; note: string; missionId: string },
+): Promise<void> {
+  const payer = input.payer.trim().replace(/\s+/g, " ");
+  if (payer.length < 2 || payer.length > 80) throw new CompanyError("Name who paid.");
+  const cents = dollarsToCents(input.amount);
+  if (cents == null) throw new CompanyError("Enter an amount like 25 or 25.00.");
+  const note = input.note.trim().slice(0, 500);
+  const ws = await ensureCompany(sql, userId);
+  assertOwner(ws);
+  let missionId: string | null = null;
+  let missionTitle = "";
+  if (input.missionId.trim()) {
+    const mission = await mustMission(sql, ws.orgId, input.missionId.trim());
+    missionId = mission.id;
+    missionTitle = mission.title;
+  }
+  await sql`insert into payments (
+    id, organization_id, mission_id, payer, amount_cents, method, destination, note, created_by
+  ) values (
+    ${nid("pay")}, ${ws.orgId}, ${missionId}, ${payer}, ${cents}, ${PAYMENT.method}, ${PAYMENT.cashtag}, ${note}, ${userId}
+  )`;
+  await audit(
+    sql,
+    ws,
+    userId,
+    "payment.recorded",
+    missionId ?? ws.orgId,
+    null,
+    null,
+    `${formatMoney(cents)} from ${payer} via ${PAYMENT.method} ${PAYMENT.cashtag}${missionTitle ? ` · ${missionTitle}` : ""}`,
+  );
+}
+
+export async function voidPayment(sql: Sql, userId: string, paymentId: string): Promise<void> {
+  const ws = await ensureCompany(sql, userId);
+  assertOwner(ws);
+  const rows = await sql<{ id: string; payer: string; amount_cents: unknown; voided_at: unknown }>`
+    select id, payer, amount_cents, voided_at from payments
+    where id = ${paymentId} and organization_id = ${ws.orgId} limit 1`;
+  const payment = rows[0];
+  if (!payment) throw new CompanyError("That payment is not in this company.");
+  if (payment.voided_at) throw new CompanyError("That payment is already void.");
+  const saved = await sql<{ id: string }>`update payments set voided_at = now()
+    where id = ${payment.id} and organization_id = ${ws.orgId} and voided_at is null
+    returning id`;
+  if (!saved[0]) throw new CompanyError("That payment changed before it could be voided.");
+  await audit(
+    sql,
+    ws,
+    userId,
+    "payment.voided",
+    payment.id,
+    null,
+    null,
+    `${formatMoney(num(payment.amount_cents))} from ${payment.payer} voided. This is not a refund.`,
+  );
+}
+
+async function missionPayments(sql: Sql, orgId: string, missionId: string): Promise<PaymentRow[]> {
+  const rows = await sql<{
+    id: string;
+    payer: string;
+    amount_cents: unknown;
+    method: string;
+    destination: string;
+    note: string;
+    voided_at: unknown;
+    mission_id: string | null;
+    mission_title: string | null;
+    created_at: unknown;
+  }>`select p.id, p.payer, p.amount_cents, p.method, p.destination, p.note, p.voided_at, p.mission_id, m.title as mission_title, p.created_at
+    from payments p
+    left join missions m on m.id = p.mission_id
+    where p.organization_id = ${orgId} and p.mission_id = ${missionId}
+    order by p.created_at desc limit 20`;
+  return rows.map(toPayment);
+}
+
+function toPayment(row: {
+  id: string;
+  payer: string;
+  amount_cents: unknown;
+  method: string;
+  destination: string;
+  note: string;
+  voided_at: unknown;
+  mission_id: string | null;
+  mission_title: string | null;
+  created_at: unknown;
+}): PaymentRow {
+  const voidedAt = iso(row.voided_at);
+  return {
+    id: row.id,
+    payer: row.payer,
+    amountCents: num(row.amount_cents),
+    method: row.method,
+    destination: row.destination,
+    note: row.note,
+    voidedAt: voidedAt || null,
+    missionId: row.mission_id,
+    missionTitle: row.mission_title,
+    createdAt: iso(row.created_at),
+  };
 }
 
 async function produce(
   next: AssignmentRow,
   objective: string,
   strategy: string,
+  answers: string,
   prior: AssignmentRow[],
   think: Thinker,
   memory: string,
@@ -605,10 +821,8 @@ async function produce(
   const thought = agent
     ? await think({
         system: systemPrompt(agent),
-        user: `Objective:\n${objective}\n\nStrategy:\n${strategy.slice(0, 1500)}\n\nVerified memory from accepted missions:\n${memory || "None yet."}\n\n${
-          slug === "developer"
-            ? `Open defects the implementation must fix. Do not claim quality passed:\n${defects || "None."}\n\n`
-            : ""
+        user: `Objective:\n${objective}\n\nOwner's answer:\n${answers.trim() || "None yet."}\n\nStrategy:\n${strategy.slice(0, 1500)}\n\nVerified memory from accepted missions:\n${memory || "None yet."}\n\n${
+          defects ? `Open defects. Fix what belongs to you. Do not claim quality passed:\n${defects}\n\n` : ""
         }Your assignment: ${next.title}\n${next.brief}\n\nPrior work:\n${priorText || "None yet."}`,
       })
     : { text: "", model: "" };
@@ -669,15 +883,17 @@ type MissionRow = {
   status: MissionStatus;
   strategy: string;
   questions: unknown;
+  answers: string;
   plan_source: string;
   updated_at: unknown;
 };
 
 async function mustMission(sql: Sql, orgId: string, missionId: string): Promise<MissionRow> {
-  const rows = await sql<MissionRow>`select id, title, objective, status, strategy, questions, plan_source, updated_at
+  const rows = await sql<MissionRow>`select id, title, objective, status, strategy, questions, answers, plan_source, updated_at
     from missions where id = ${missionId} and organization_id = ${orgId} limit 1`;
   const mission = rows[0];
   if (!mission || !isMissionStatus(mission.status)) throw new CompanyError("That mission is not in this company.");
+  mission.answers = mission.answers ?? "";
   return mission;
 }
 
@@ -713,14 +929,14 @@ function toAssignment(row: AssignmentRow): AssignmentView {
     status: row.status,
     artifact: row.artifact,
     evidence: readChecks(row.evidence),
-    model: row.model,
+    model: row.model.startsWith("run_") ? "" : row.model,
     error: row.error,
   };
 }
 
 async function releaseStaleRuns(sql: Sql, ws: Workspace, missionId: string): Promise<void> {
   const released = await sql<{ id: string }>`update assignments
-    set status = ${"READY"}, error = ${"The run stopped before it wrote an artifact."}, updated_at = now()
+    set status = ${"READY"}, model = ${""}, run_token = ${""}, error = ${"The run stopped before it wrote an artifact."}, updated_at = now()
     where mission_id = ${missionId} and organization_id = ${ws.orgId} and status = ${"RUNNING"}
       and updated_at < now() - interval '90 seconds'
     returning id`;
@@ -801,7 +1017,7 @@ async function memoryTitles(sql: Sql, orgId: string, excludeMissionId: string): 
 async function memoryBrief(sql: Sql, orgId: string, excludeMissionId: string): Promise<string> {
   const rows = await memoryRows(sql, orgId, excludeMissionId);
   return rows
-    .map((row) => `- ${row.title}: ${row.body.replace(/\s+/g, " ").trim().slice(0, 280)}`)
+    .map((row) => `- ${row.title}: ${row.body.replace(/\s+/g, " ").trim().slice(0, 480)}`)
     .join("\n");
 }
 

@@ -18,7 +18,7 @@ function Login() {
             <p className="text-sm">
               You are signed in.{" "}
               <Link to="/" className="text-accent">
-                Open the board
+                Open the command center
               </Link>
             </p>
           ) : (

@@ -8,6 +8,7 @@ const LINKS = [
   { to: "/missions", label: "Missions" },
   { to: "/workforce", label: "Workforce" },
   { to: "/operations", label: "Operations" },
+  { to: "/payments", label: "Payments" },
   { to: "/knowledge", label: "Knowledge" },
   { to: "/governance", label: "Governance" },
 ] as const;
@@ -15,8 +16,13 @@ const LINKS = [
 export function useReadySession() {
   const session = useCurrentUserState();
   const [ready, setReady] = useState(false);
-  useEffect(() => setReady(true), []);
-  return { user: session.user, pending: !ready || session.isPending };
+  const [waited, setWaited] = useState(false);
+  useEffect(() => {
+    setReady(true);
+    const timer = window.setTimeout(() => setWaited(true), 900);
+    return () => window.clearTimeout(timer);
+  }, []);
+  return { user: session.user, pending: !ready || (session.isPending && !waited) };
 }
 
 export function Shell({ children }: { children: ReactNode }) {

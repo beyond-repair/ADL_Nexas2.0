@@ -39,8 +39,17 @@ function Roster() {
           <section key={department.slug}>
             <h2 className="text-sm font-medium">{department.name}</h2>
             <p className="mt-1 text-sm text-muted">{department.mandate}</p>
+            {department.slug === "business" ? (
+              <p className="mt-2 text-sm">
+                <Link to="/payments" className="text-accent">Payment record</Link>
+              </p>
+            ) : null}
             {department.agents.length === 0 ? (
-              <p className="mt-3 text-sm text-muted">No agents seated in this release.</p>
+              <p className="mt-3 text-sm text-muted">
+                {department.slug === "governance"
+                  ? "The owner holds this department. No agent sits here, and none can change who is allowed to act."
+                  : "No agents seated in this release."}
+              </p>
             ) : (
               <ul className="mt-3 divide-y divide-line border-y border-line">
                 {department.agents.map((agent) => (

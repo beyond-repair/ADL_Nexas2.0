@@ -1,4 +1,5 @@
 import { Link, createFileRoute } from "@tanstack/react-router";
+import { RunTokenNote } from "@/components/company-notes";
 import { Shell, useReadySession } from "@/components/shell";
 import { Alert, when } from "@/components/nexus-ui";
 import { LEVEL_LABEL, OWNER_GATES } from "@/lib/nexus/company";
@@ -45,6 +46,15 @@ function Record() {
         </ul>
       </section>
       <section className="mt-8">
+        <h2 className="text-sm font-medium">Run token</h2>
+        <div className="mt-2 max-w-xl">
+          <RunTokenNote />
+        </div>
+        <p className="mt-2 max-w-xl text-sm text-muted">
+          The token is not a permission. It only decides which write is still current. Recording a Cash App payment does not let an agent spend.
+        </p>
+      </section>
+      <section className="mt-8">
         <h2 className="text-sm font-medium">Audit</h2>
         {data.events.length === 0 ? (
           <p className="mt-2 text-sm text-muted">No events yet.</p>
@@ -56,6 +66,11 @@ function Record() {
                 <span className="font-mono text-xs">{event.action}</span>
                 {event.toState ? <span className="text-muted"> → {event.toState}</span> : null}
                 {event.detail ? <span className="mt-0.5 block text-muted">{event.detail}</span> : null}
+                {event.target?.startsWith("msn_") ? (
+                  <Link to="/missions/$missionId" params={{ missionId: event.target }} className="mt-0.5 block text-xs text-accent">
+                    Open the mission
+                  </Link>
+                ) : null}
               </li>
             ))}
           </ul>

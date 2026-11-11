@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
+import { PayCard, RunTokenNote } from "@/components/company-notes";
 import { Shell, useReadySession } from "@/components/shell";
-import { Alert, Button, when } from "@/components/nexus-ui";
-import { MISSION_LABEL, MISSION_PATH } from "@/lib/nexus/company";
+import { Alert, Button, controlClass, when } from "@/components/nexus-ui";
+import { agentBySlug, CHECK_OWNER, dollarsToCents, formatMoney, MISSION_LABEL, MISSION_PATH, reworkFrom } from "@/lib/nexus/company";
 import type { MissionView } from "@/lib/nexus/company-store";
 import { companyCommand } from "@/lib/nexus/company-api";
 import { errorText, useCompany } from "@/lib/nexus/use-company";
@@ -102,6 +103,12 @@ function MissionBody({ missionId }: { missionId: string }) {
   const failed = data.assignments.find((row) => row.status === "FAILED");
   const next = data.assignments.find((row) => row.status !== "DONE");
   const slice = workingSlice(data.assignments.find((row) => row.agent === "developer")?.artifact ?? "");
+  const redo = reworkFrom(
+    data.defects.map((item) => item.name),
+    data.assignments.filter((row) => row.status === "FAILED").map((row) => row.agent),
+  );
+  const redoName = agentBySlug(redo)?.name ?? "the department";
+  const terminal = status === "REJECTED" || status === "CANCELLED" ? status : null;
 
   return (
     <div className="py-6">
@@ -115,8 +122,9 @@ function MissionBody({ missionId }: { missionId: string }) {
       ) : null}
       <ol className="mt-5 flex gap-2 overflow-x-auto pb-1">
         {MISSION_PATH.map((step) => {
+          const reached = status === "REJECTED" ? MISSION_PATH.indexOf("AWAITING_ACCEPTANCE") : MISSION_PATH.indexOf(status);
           const here = step === status;
-          const done = MISSION_PATH.indexOf(status) > MISSION_PATH.indexOf(step);
+          const done = !here && reached >= MISSION_PATH.indexOf(step);
           const tone = here ? "border-accent text-accent" : done ? "border-line text-fg" : "border-line text-muted";
           return (
             <li key={step} className={`shrink-0 border-b-2 pb-1 font-mono text-xs ${tone}`} aria-current={here ? "step" : undefined}>
@@ -124,10 +132,18 @@ function MissionBody({ missionId }: { missionId: string }) {
             </li>
           );
         })}
+        {terminal ? (
+          <li className="shrink-0 border-b-2 border-danger pb-1 font-mono text-xs text-danger" aria-current="step">
+            {MISSION_LABEL[terminal]}
+          </li>
+        ) : null}
       </ol>
       {status === "ACCEPTED" ? <p className="mt-3 text-sm">Accepted. The packet is on the record.</p> : null}
-      {status === "REJECTED" || status === "CANCELLED" ? (
-        <p className="mt-3 font-mono text-xs text-danger">{MISSION_LABEL[status]}</p>
+      {status === "REJECTED" ? (
+        <p className="mt-3 text-sm text-muted">Rejected, after the packet was offered. Return to the plan and the departments run again. Rewrite the strategy if the plan itself was wrong.</p>
+      ) : null}
+      {status === "CANCELLED" ? (
+        <p className="mt-3 text-sm text-muted">Cancelled. Departments that had not finished are closed. This does not delete the record.</p>
       ) : null}
 
       <div className="mt-6 flex flex-wrap gap-2">
@@ -160,12 +176,12 @@ function MissionBody({ missionId }: { missionId: string }) {
         ) : null}
         {failed ? (
           <Button disabled={busy !== null || running} onClick={() => void fixAndRetest()}>
-            {busy === "fix" ? `Retesting ${stepLabel ?? "engineering"}…` : "Fix and retest"}
+            {busy === "fix" ? `Retesting ${stepLabel ?? redoName}…` : `Fix and retest · ${redoName}`}
           </Button>
         ) : null}
         {status === "AWAITING_ACCEPTANCE" ? (
           <Button variant="quiet" disabled={busy !== null} onClick={() => void act("rework")}>
-            Send back to engineering
+            {busy === "rework" ? "Sending back…" : `Send back to ${redoName}`}
           </Button>
         ) : null}
         {status !== "ACCEPTED" && status !== "CANCELLED" ? (
@@ -182,14 +198,47 @@ function MissionBody({ missionId }: { missionId: string }) {
       {formError ? <div className="mt-3"><Alert>{formError}</Alert></div> : null}
       {error ? <div className="mt-3"><Alert>{error}</Alert></div> : null}
 
+      <section className="mt-8 max-w-2xl">
+        <h2 className="text-sm font-medium">How this run is locked</h2>
+        <div className="mt-2">
+          <RunTokenNote />
+        </div>
+      </section>
+
       {mission.questions.length > 0 ? (
         <section className="mt-8">
-          <h2 className="text-sm font-medium">Open questions</h2>
+          <h2 className="text-sm font-medium">Questions</h2>
           <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-muted">
             {mission.questions.map((question) => (
               <li key={question}>{question}</li>
             ))}
           </ul>
+        </section>
+      ) : null}
+
+      {status === "PROPOSED" || status === "PLANNED" || status === "REJECTED" ? (
+        <AnswerForm
+          key={`${mission.id}:${mission.answers}`}
+          initial={mission.answers}
+          disabled={busy !== null}
+          saving={busy === "answer"}
+          onSave={async (text) => {
+            setBusy("answer");
+            setFormError(null);
+            try {
+              await companyCommand({ data: { type: "answer", missionId, note: text } });
+              reload();
+            } catch (err) {
+              setFormError(errorText(err));
+            } finally {
+              setBusy(null);
+            }
+          }}
+        />
+      ) : mission.answers ? (
+        <section className="mt-8 max-w-2xl">
+          <h2 className="text-sm font-medium">Owner's answer</h2>
+          <p className="mt-2 text-sm text-muted">{mission.answers}</p>
         </section>
       ) : null}
 
@@ -228,12 +277,17 @@ function MissionBody({ missionId }: { missionId: string }) {
           <h2 className="text-sm font-medium">Open defects</h2>
           <p className="mt-1 text-sm text-muted">Quality failed these checks. They stay open until a later verification passes.</p>
           <ul className="mt-3 space-y-2">
-            {data.defects.map((defect) => (
+            {data.defects.map((defect) => {
+              const owner = CHECK_OWNER[defect.name];
+              const ownerName = owner ? (agentBySlug(owner)?.name ?? owner) : "the company";
+              return (
               <li key={defect.id} className="text-sm">
                 <span className="font-mono text-xs text-danger">{defect.name}</span>
                 <span className="mt-1 block text-muted">{defect.detail}</span>
+                <span className="mt-1 block text-xs text-muted">Owned by {ownerName}</span>
               </li>
-            ))}
+              );
+            })}
           </ul>
         </section>
       ) : null}
@@ -290,6 +344,10 @@ function MissionBody({ missionId }: { missionId: string }) {
         </section>
       ) : null}
 
+      {status === "AWAITING_ACCEPTANCE" || status === "ACCEPTED" || data.payments.length > 0 || (status !== "PROPOSED" && status !== "CANCELLED") ? (
+        <MissionLedger missionId={mission.id} rows={data.payments} poster={status === "AWAITING_ACCEPTANCE" || status === "ACCEPTED"} onChange={reload} />
+      ) : null}
+
       {data.audit.length > 0 ? (
         <section className="mt-10">
           <h2 className="text-sm font-medium">Record</h2>
@@ -306,6 +364,126 @@ function MissionBody({ missionId }: { missionId: string }) {
         </section>
       ) : null}
     </div>
+  );
+}
+
+function MissionLedger({
+  missionId,
+  rows,
+  poster,
+  onChange,
+}: {
+  missionId: string;
+  rows: Array<{ id: string; payer: string; amountCents: number; note: string; voidedAt: string | null; createdAt: string }>;
+  poster: boolean;
+  onChange: () => void;
+}) {
+  const [payer, setPayer] = useState("");
+  const [amount, setAmount] = useState("");
+  const [payNote, setPayNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [voiding, setVoiding] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const cents = dollarsToCents(amount);
+  const active = rows.filter((row) => !row.voidedAt);
+  const total = active.reduce((sum, row) => sum + row.amountCents, 0);
+
+  async function record(event: FormEvent) {
+    event.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await companyCommand({ data: { type: "record-payment", missionId, payer, amount, note: payNote } });
+      setPayer("");
+      setAmount("");
+      setPayNote("");
+      onChange();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function voidRow(id: string) {
+    if (voiding !== id) {
+      setVoiding(id);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await companyCommand({ data: { type: "void-payment", paymentId: id } });
+      setVoiding(null);
+      onChange();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="mt-8 max-w-xl">
+      <PayCard poster={poster} recordedCents={total} recordedLabel="On this mission" />
+      <form onSubmit={(event) => void record(event)} className="mt-4 space-y-2">
+        <p className="text-sm text-muted">Record money that already arrived for this mission. NEXUS does not collect it.</p>
+        <input value={payer} onChange={(event) => setPayer(event.target.value)} placeholder="Who paid" className={`${controlClass} h-11`} />
+        <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" placeholder="Amount, 25.00" className={`${controlClass} h-11`} />
+        <input value={payNote} onChange={(event) => setPayNote(event.target.value)} placeholder="Note" className={`${controlClass} h-11`} />
+        {error ? <Alert>{error}</Alert> : null}
+        <Button type="submit" disabled={busy || payer.trim().length < 2 || cents == null}>
+          {busy ? "Recording…" : "Record on this mission"}
+        </Button>
+      </form>
+      {rows.length > 0 ? (
+        <ul className="mt-4 divide-y divide-line border-y border-line">
+          {rows.map((row) => (
+            <li key={row.id} className="py-3 text-sm">
+              <span className={row.voidedAt ? "text-muted line-through" : ""}>{row.payer}</span>
+              <span className="float-right font-mono tabular-nums">{formatMoney(row.amountCents)}</span>
+              <span className="mt-1 block text-xs text-muted">{row.voidedAt ? `Voided ${when(row.voidedAt)}` : when(row.createdAt)}{row.note ? ` · ${row.note}` : ""}</span>
+              {row.voidedAt ? null : (
+                <button type="button" className="mt-1 inline-flex h-11 items-center text-sm text-danger" disabled={busy} onClick={() => void voidRow(row.id)}>
+                  {voiding === row.id ? "Confirm void" : "Void this record"}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </section>
+  );
+}
+
+function AnswerForm({
+  initial,
+  disabled,
+  saving,
+  onSave,
+}: {
+  initial: string;
+  disabled: boolean;
+  saving: boolean;
+  onSave: (text: string) => Promise<void>;
+}) {
+  const [answer, setAnswer] = useState(initial);
+  return (
+    <section className="mt-8 max-w-xl">
+      <h2 className="text-sm font-medium">Your answer</h2>
+      <p className="mt-2 text-sm text-muted">
+        The next plan and every department read this. Saving it does not authorize the work.
+      </p>
+      <textarea
+        value={answer}
+        onChange={(event) => setAnswer(event.target.value)}
+        placeholder="Who it is for, and what you will accept"
+        className="mt-3 min-h-20 w-full rounded-md border border-line bg-bg px-3 py-2 text-sm"
+      />
+      <Button className="mt-3" disabled={disabled || answer.trim().length < 4} onClick={() => void onSave(answer)}>
+        {saving ? "Saving…" : "Save the answer"}
+      </Button>
+    </section>
   );
 }
 
